@@ -1,0 +1,10 @@
+.DS_Store
+.idea/
+venv/
+build/
+dist/
+version.txt
+debug/
+*.pyc
+*.egg-info/
+/ansilogs/_version.py

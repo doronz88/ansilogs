@@ -1,0 +1,62 @@
+[project]
+name = "ansilogs"
+description = "Colored, single-line log output for command-line tools: a dependency-free coloredlogs.install() replacement"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+keywords = ["logging", "color", "ansi", "terminal", "cli"]
+authors = [
+    { name = "doronz88", email = "doron88@gmail.com" }
+]
+maintainers = [
+    { name = "doronz88", email = "doron88@gmail.com" }
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: System :: Logging",
+    "Typing :: Typed",
+]
+dependencies = []
+dynamic = ["version"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.urls]
+"Homepage" = "https://github.com/doronz88/ansilogs"
+"Bug Reports" = "https://github.com/doronz88/ansilogs/issues"
+
+[tool.setuptools.packages.find]
+exclude = ["docs*", "tests*"]
+
+[tool.setuptools.package-data]
+ansilogs = ["py.typed"]
+
+[tool.setuptools_scm]
+version_file = "ansilogs/_version.py"
+
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+fix = true
+
+[tool.ruff.lint]
+select = ["YTT", "B", "A", "C4", "T10", "SIM", "I", "E", "W", "F", "PGH", "UP", "RUF", "TRY"]
+
+[tool.pyright]
+pythonVersion = "3.9"
+typeCheckingMode = "strict"
+include = ["ansilogs", "tests"]
