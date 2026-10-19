@@ -18,22 +18,63 @@ import logging
 import os
 import socket
 import sys
-from typing import IO, Optional, Union
+from typing import IO, NamedTuple, Optional, Union
 
-__all__ = ["DATE_FORMAT", "ColoredFormatter", "StderrHandler", "install", "set_level", "supports_color"]
+__all__ = [
+    "DATE_FORMAT",
+    "STYLES",
+    "ColoredFormatter",
+    "StderrHandler",
+    "Style",
+    "install",
+    "set_level",
+    "supports_color",
+]
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _RESET = "\x1b[0m"
-_TIME = "32"  # green
-_HOST = "35"  # magenta
-_NAME = "34"  # blue
-_LEVEL_NAME = "1;30"  # bold black
-_MESSAGE_BY_LEVEL = {
-    logging.DEBUG: "32",  # green
-    logging.WARNING: "33",  # yellow
-    logging.ERROR: "31",  # red
-    logging.CRITICAL: "1;31",  # bold red
+
+
+class Style(NamedTuple):
+    """SGR codes per field ("" = uncolored). ``level``/``message`` map a level number to its code."""
+
+    time: str
+    host: str
+    name: str
+    pid: Optional[str]  # None: the pid takes the name's color
+    level: dict[int, str]
+    level_default: str  # level-name code for levels missing from ``level``
+    message: dict[int, str]
+
+
+STYLES: dict[str, Style] = {
+    # Metadata recedes, the level name carries the severity, debug output is dimmed.
+    "default": Style(
+        time="2",
+        host="2",
+        name="36",
+        pid="2",
+        level={
+            logging.DEBUG: "2",
+            logging.INFO: "1;32",
+            logging.WARNING: "1;33",
+            logging.ERROR: "1;31",
+            logging.CRITICAL: "1;37;41",
+        },
+        level_default="1",
+        message={logging.DEBUG: "2", logging.WARNING: "33", logging.ERROR: "31", logging.CRITICAL: "1;31"},
+    ),
+    # coloredlogs' defaults, byte for byte.
+    "coloredlogs": Style(
+        time="32",
+        host="35",
+        name="34",
+        pid=None,
+        level={},
+        level_default="1;30",
+        message={logging.DEBUG: "32", logging.WARNING: "33", logging.ERROR: "31", logging.CRITICAL: "1;31"},
+    ),
 }
 
 # SetConsoleMode flag that makes a Windows console interpret ANSI escape sequences.
@@ -42,39 +83,53 @@ _STD_ERROR_HANDLE = -12
 
 
 def _sgr(code: str, text: str) -> str:
-    return f"\x1b[{code}m{text}{_RESET}"
+    return f"\x1b[{code}m{text}{_RESET}" if code else text
 
 
 class ColoredFormatter(logging.Formatter):
     """
     ``<time> <host> <name>[<pid>] <LEVEL> <message>``, with ANSI colors when ``colors`` is set.
 
-    The colors are baked into the format string once; per record only the message is wrapped in
-    its level's color. Tracebacks and stack info are appended uncolored.
+    ``style`` names an entry of :data:`STYLES` (``"default"`` or ``"coloredlogs"``). Fixed colors
+    are baked into the format string once; per record only the level name and the message are
+    wrapped in their level's color. Tracebacks and stack info are appended uncolored.
     """
 
-    def __init__(self, colors: bool = True, hostname: Optional[str] = None) -> None:
+    def __init__(self, colors: bool = True, hostname: Optional[str] = None, style: str = "default") -> None:
+        theme = STYLES[style]
         host = (hostname or socket.gethostname()).replace("%", "%%")
-        fields = [
-            ("%(asctime)s", _TIME),
-            (host, _HOST),
-            ("%(name)s[%(process)d]", _NAME),
-            ("%(levelname)s", _LEVEL_NAME),
-        ]
-        prefix = " ".join(_sgr(code, text) if colors else text for text, code in fields)
-        super().__init__(f"{prefix} %(message)s", datefmt=DATE_FORMAT)
+
+        def paint(code: str, text: str) -> str:
+            return _sgr(code, text) if colors else text
+
+        if theme.pid is None:
+            name = paint(theme.name, "%(name)s[%(process)d]")
+        else:
+            name = paint(theme.name, "%(name)s") + paint(theme.pid, "[%(process)d]")
+        level = "%(levelname)s" if theme.level else paint(theme.level_default, "%(levelname)s")
+        super().__init__(
+            f"{paint(theme.time, '%(asctime)s')} {paint(theme.host, host)} {name} {level} %(message)s",
+            datefmt=DATE_FORMAT,
+        )
         self.colors = colors
+        self.style_name = style
+        self._theme = theme
 
     def formatMessage(self, record: logging.LogRecord) -> str:
-        code = _MESSAGE_BY_LEVEL.get(record.levelno) if self.colors else None
-        if code is None:
+        if not self.colors:
             return super().formatMessage(record)
-        message = record.message
-        record.message = _sgr(code, message)
+        theme = self._theme
+        level_code = theme.level.get(record.levelno, theme.level_default) if theme.level else ""
+        message_code = theme.message.get(record.levelno, "")
+        if not level_code and not message_code:
+            return super().formatMessage(record)
+        levelname, message = record.levelname, record.message
+        record.levelname = _sgr(level_code, levelname)
+        record.message = _sgr(message_code, message)
         try:
             return super().formatMessage(record)
         finally:
-            record.message = message
+            record.levelname, record.message = levelname, message
 
 
 class StderrHandler(logging.Handler):
@@ -143,18 +198,19 @@ def _installed_handler() -> Optional[StderrHandler]:
     return next((h for h in logging.getLogger().handlers if isinstance(h, StderrHandler)), None)
 
 
-def install(level: Union[int, str] = logging.INFO, colors: Optional[bool] = None) -> None:
+def install(level: Union[int, str] = logging.INFO, colors: Optional[bool] = None, style: str = "default") -> None:
     """
     Attach a colored stderr handler to the root logger and show records from ``level`` up.
 
     Calling it again reconfigures the existing handler instead of adding another. ``colors``
-    defaults to :func:`supports_color` for the current ``sys.stderr``.
+    defaults to :func:`supports_color` for the current ``sys.stderr``; ``style`` names an entry of
+    :data:`STYLES` (``"coloredlogs"`` reproduces coloredlogs' look).
     """
     handler = _installed_handler()
     if handler is None:
         handler = StderrHandler()
         logging.getLogger().addHandler(handler)
-    handler.setFormatter(ColoredFormatter(colors=supports_color() if colors is None else colors))
+    handler.setFormatter(ColoredFormatter(colors=supports_color() if colors is None else colors, style=style))
     set_level(level)
 
 

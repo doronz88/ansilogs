@@ -43,9 +43,9 @@ def test_plain_layout_is_one_line() -> None:
     assert match.groups() == ("INFO", "sent 5 bytes")
 
 
-def test_colored_layout_matches_coloredlogs_defaults() -> None:
+def test_coloredlogs_style_matches_coloredlogs_defaults() -> None:
     record = _record(logging.WARNING, "careful")
-    line = ColoredFormatter(colors=True, hostname="host").format(record)
+    line = ColoredFormatter(colors=True, hostname="host", style="coloredlogs").format(record)
     timestamp = ColoredFormatter(colors=False).formatTime(record, ansilogs.DATE_FORMAT)
     assert line == (
         f"\x1b[32m{timestamp}\x1b[0m \x1b[35mhost\x1b[0m \x1b[34mansilogs.tests[{record.process}]\x1b[0m "
@@ -53,21 +53,42 @@ def test_colored_layout_matches_coloredlogs_defaults() -> None:
     )
 
 
+def test_default_style_layout() -> None:
+    record = _record(logging.WARNING, "careful")
+    line = ColoredFormatter(colors=True, hostname="host").format(record)
+    timestamp = ColoredFormatter(colors=False).formatTime(record, ansilogs.DATE_FORMAT)
+    assert line == (
+        f"\x1b[2m{timestamp}\x1b[0m \x1b[2mhost\x1b[0m \x1b[36mansilogs.tests\x1b[0m\x1b[2m[{record.process}]\x1b[0m "
+        "\x1b[1;33mWARNING\x1b[0m \x1b[33mcareful\x1b[0m"
+    )
+
+
 @pytest.mark.parametrize(
-    ("level", "code"),
-    [(logging.DEBUG, "32"), (logging.WARNING, "33"), (logging.ERROR, "31"), (logging.CRITICAL, "1;31")],
+    ("style", "level", "level_code", "message_code"),
+    [
+        ("default", logging.DEBUG, "2", "2"),
+        ("default", logging.INFO, "1;32", ""),
+        ("default", logging.WARNING, "1;33", "33"),
+        ("default", logging.ERROR, "1;31", "31"),
+        ("default", logging.CRITICAL, "1;37;41", "1;31"),
+        ("default", 25, "1", ""),
+        ("coloredlogs", logging.DEBUG, "1;30", "32"),
+        ("coloredlogs", logging.INFO, "1;30", ""),
+        ("coloredlogs", logging.CRITICAL, "1;30", "1;31"),
+    ],
 )
-def test_message_takes_its_level_color(level: int, code: str) -> None:
-    line = ColoredFormatter(colors=True).format(_record(level, "msg"))
-    assert line.endswith(f"\x1b[{code}mmsg\x1b[0m")
+def test_level_and_message_colors(style: str, level: int, level_code: str, message_code: str) -> None:
+    line = ColoredFormatter(colors=True, style=style).format(_record(level, "msg"))
+    levelname = logging.getLevelName(level)
+    message = f"\x1b[{message_code}mmsg\x1b[0m" if message_code else "msg"
+    assert line.endswith(f"\x1b[{level_code}m{levelname}\x1b[0m {message}")
 
 
-def test_info_message_is_uncolored_and_record_is_left_untouched() -> None:
-    record = _record(logging.INFO, "msg")
-    assert ColoredFormatter(colors=True).format(record).endswith("\x1b[0m msg")
+def test_record_is_left_untouched() -> None:
     warning = _record(logging.WARNING, "msg")
     ColoredFormatter(colors=True).format(warning)
     assert warning.message == "msg"
+    assert warning.levelname == "WARNING"
 
 
 def test_hostname_with_percent_is_literal() -> None:
@@ -83,7 +104,7 @@ def test_traceback_is_appended_uncolored() -> None:
         boom()
     record = _record(logging.ERROR, "failed", exc_info=(excinfo.type, excinfo.value, excinfo.tb))
     lines = ColoredFormatter(colors=True).format(record).splitlines()
-    assert lines[0].endswith("\x1b[31mfailed\x1b[0m")
+    assert lines[0].endswith("\x1b[1;31mERROR\x1b[0m \x1b[31mfailed\x1b[0m")
     assert lines[1] == "Traceback (most recent call last):"
     assert lines[-1] == "ValueError: boom"
 
