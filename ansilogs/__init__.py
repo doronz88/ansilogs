@@ -16,6 +16,7 @@ time of each record, so redirections (test capture, live progress displays) are 
 
 import logging
 import os
+import re
 import socket
 import sys
 from typing import IO, NamedTuple, Optional, Union
@@ -35,6 +36,9 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _RESET = "\x1b[0m"
 
+# A `backticked` span: closed, non-empty and on one line.
+_CODE_SPAN = re.compile(r"`[^`\n]+`")
+
 
 class Style(NamedTuple):
     """SGR codes per field ("" = uncolored). ``level``/``message`` map a level number to its code."""
@@ -46,6 +50,7 @@ class Style(NamedTuple):
     level: dict[int, str]
     level_default: str  # level-name code for levels missing from ``level``
     message: dict[int, str]
+    code: str = ""  # `backticked` spans of the message, when the formatter is asked to highlight them
 
 
 STYLES: dict[str, Style] = {
@@ -64,6 +69,7 @@ STYLES: dict[str, Style] = {
         },
         level_default="1",
         message={logging.DEBUG: "2", logging.WARNING: "33", logging.ERROR: "31", logging.CRITICAL: "1;31"},
+        code="1;36",
     ),
     # coloredlogs' defaults, byte for byte.
     "coloredlogs": Style(
@@ -74,6 +80,7 @@ STYLES: dict[str, Style] = {
         level={},
         level_default="1;30",
         message={logging.DEBUG: "32", logging.WARNING: "33", logging.ERROR: "31", logging.CRITICAL: "1;31"},
+        code="1",
     ),
 }
 
@@ -93,9 +100,19 @@ class ColoredFormatter(logging.Formatter):
     ``style`` names an entry of :data:`STYLES` (``"default"`` or ``"coloredlogs"``). Fixed colors
     are baked into the format string once; per record only the level name and the message are
     wrapped in their level's color. Tracebacks and stack info are appended uncolored.
+
+    ``highlight_code`` also paints the message's `backticked` spans (a command to run, an
+    identifier) in the style's ``code`` color. It is off unless asked for: it recolors part of
+    every message that happens to contain a pair of backticks.
     """
 
-    def __init__(self, colors: bool = True, hostname: Optional[str] = None, style: str = "default") -> None:
+    def __init__(
+        self,
+        colors: bool = True,
+        hostname: Optional[str] = None,
+        style: str = "default",
+        highlight_code: bool = False,
+    ) -> None:
         theme = STYLES[style]
         host = (hostname or socket.gethostname()).replace("%", "%%")
 
@@ -113,6 +130,7 @@ class ColoredFormatter(logging.Formatter):
         )
         self.colors = colors
         self.style_name = style
+        self.highlight_code = highlight_code
         self._theme = theme
 
     def formatMessage(self, record: logging.LogRecord) -> str:
@@ -121,11 +139,16 @@ class ColoredFormatter(logging.Formatter):
         theme = self._theme
         level_code = theme.level.get(record.levelno, theme.level_default) if theme.level else ""
         message_code = theme.message.get(record.levelno, "")
-        if not level_code and not message_code:
-            return super().formatMessage(record)
         levelname, message = record.levelname, record.message
+        painted = message
+        if self.highlight_code and theme.code and "`" in message:
+            # A span ends with a reset, so the message's own color is switched back on after it
+            resume = f"\x1b[{message_code}m" if message_code else ""
+            painted = _CODE_SPAN.sub(lambda span: _RESET + _sgr(theme.code, span.group()) + resume, message)
+        if not level_code and not message_code and painted == message:
+            return super().formatMessage(record)
         record.levelname = _sgr(level_code, levelname)
-        record.message = _sgr(message_code, message)
+        record.message = _sgr(message_code, painted)
         try:
             return super().formatMessage(record)
         finally:
@@ -198,19 +221,29 @@ def _installed_handler() -> Optional[StderrHandler]:
     return next((h for h in logging.getLogger().handlers if isinstance(h, StderrHandler)), None)
 
 
-def install(level: Union[int, str] = logging.INFO, colors: Optional[bool] = None, style: str = "default") -> None:
+def install(
+    level: Union[int, str] = logging.INFO,
+    colors: Optional[bool] = None,
+    style: str = "default",
+    highlight_code: bool = False,
+) -> None:
     """
     Attach a colored stderr handler to the root logger and show records from ``level`` up.
 
     Calling it again reconfigures the existing handler instead of adding another. ``colors``
     defaults to :func:`supports_color` for the current ``sys.stderr``; ``style`` names an entry of
-    :data:`STYLES` (``"coloredlogs"`` reproduces coloredlogs' look).
+    :data:`STYLES` (``"coloredlogs"`` reproduces coloredlogs' look); ``highlight_code`` paints the
+    `backticked` spans of each message (see :class:`ColoredFormatter`).
     """
     handler = _installed_handler()
     if handler is None:
         handler = StderrHandler()
         logging.getLogger().addHandler(handler)
-    handler.setFormatter(ColoredFormatter(colors=supports_color() if colors is None else colors, style=style))
+    handler.setFormatter(
+        ColoredFormatter(
+            colors=supports_color() if colors is None else colors, style=style, highlight_code=highlight_code
+        )
+    )
     set_level(level)
 
 
