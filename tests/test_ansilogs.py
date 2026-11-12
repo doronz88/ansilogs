@@ -84,6 +84,60 @@ def test_level_and_message_colors(style: str, level: int, level_code: str, messa
     assert line.endswith(f"\x1b[{level_code}m{levelname}\x1b[0m {message}")
 
 
+@pytest.mark.parametrize(
+    ("level", "message_code"),
+    [(logging.INFO, ""), (logging.ERROR, "31"), (logging.DEBUG, "2")],
+)
+def test_backticked_spans_are_highlighted_and_the_message_color_resumes(level: int, message_code: str) -> None:
+    record = _record(level, "run `tool mount` and then `tool list` again")
+    line = ColoredFormatter(colors=True, highlight_code=True).format(record)
+    resume = f"\x1b[{message_code}m" if message_code else ""
+    code = "\x1b[0m\x1b[1;36m{}\x1b[0m" + resume
+    body = f"run {code.format('`tool mount`')} and then {code.format('`tool list`')} again"
+    assert line.endswith(" " + (f"\x1b[{message_code}m{body}\x1b[0m" if message_code else body))
+
+
+def test_the_highlight_keeps_the_text_as_it_is() -> None:
+    line = ColoredFormatter(colors=True, highlight_code=True).format(_record(logging.ERROR, "run `tool mount` now"))
+    assert re.sub(r"\x1b\[[\d;]*m", "", line).endswith("ERROR run `tool mount` now")
+
+
+@pytest.mark.parametrize("message", ["a lone ` backtick", "an empty `` pair", "one `spanning\nlines` is left alone"])
+def test_only_a_closed_single_line_span_is_highlighted(message: str) -> None:
+    line = ColoredFormatter(colors=True, highlight_code=True).format(_record(logging.INFO, message))
+    assert line.endswith(" " + message)
+
+
+def test_backticked_spans_are_left_alone_unless_asked_for() -> None:
+    # Highlighting recolors part of any message that contains a pair of backticks
+    line = ColoredFormatter(colors=True).format(_record(logging.ERROR, "run `tool mount`"))
+    assert line.endswith("\x1b[31mrun `tool mount`\x1b[0m")
+
+
+def test_plain_output_has_no_highlight() -> None:
+    formatter = ColoredFormatter(colors=False, hostname="host", highlight_code=True)
+    assert formatter.format(_record(logging.ERROR, "run `tool mount`")).endswith("ERROR run `tool mount`")
+
+
+def test_coloredlogs_style_highlights_in_bold_when_asked() -> None:
+    formatter = ColoredFormatter(colors=True, style="coloredlogs", highlight_code=True)
+    line = formatter.format(_record(logging.ERROR, "run `tool mount`"))
+    assert line.endswith("\x1b[31mrun \x1b[0m\x1b[1m`tool mount`\x1b[0m\x1b[31m\x1b[0m")
+
+
+def test_install_passes_highlight_code_on(root: logging.Logger) -> None:
+    ansilogs.install(colors=True)
+    assert [handler.formatter.highlight_code for handler in _ours(root)] == [False]  # type: ignore[union-attr]
+    ansilogs.install(colors=True, highlight_code=True)
+    assert [handler.formatter.highlight_code for handler in _ours(root)] == [True]  # type: ignore[union-attr]
+
+
+def test_a_style_can_be_built_without_a_code_color() -> None:
+    # `code` was added after the other fields: existing positional constructions keep working
+    style = ansilogs.Style("2", "2", "36", "2", {}, "1", {})
+    assert style.code == ""
+
+
 def test_record_is_left_untouched() -> None:
     warning = _record(logging.WARNING, "msg")
     ColoredFormatter(colors=True).format(warning)

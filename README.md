@@ -21,6 +21,9 @@ logging.getLogger(__name__).warning("careful")
 - The default style dims the time, host and pid, shows the logger name in cyan and the level name
   in its severity color (debug output dimmed). `style="coloredlogs"` reproduces coloredlogs' look
   byte for byte.
+- `highlight_code=True` also paints the `` `backticked` `` spans of a message (a command to run, an
+  identifier), so they stand out from the sentence around them. The text itself is unchanged. It is
+  off by default, since it recolors part of any message that contains a pair of backticks.
 - Colors only when stderr is a terminal. `NO_COLOR` (non-empty) disables them, `FORCE_COLOR`
   (non-empty) forces them. On Windows the console is switched to ANSI processing; if that
   fails, output is plain.
@@ -29,13 +32,14 @@ logging.getLogger(__name__).warning("careful")
 
 ## API
 
-- `install(level=logging.INFO, colors=None, style="default")`: attach the handler to the root
-  logger (once) and show records from `level` up. `colors=None` means `supports_color()`;
-  `style` is `"default"` or `"coloredlogs"` (see `STYLES`).
+- `install(level=logging.INFO, colors=None, style="default", highlight_code=False)`: attach the
+  handler to the root logger (once) and show records from `level` up. `colors=None` means
+  `supports_color()`; `style` is `"default"` or `"coloredlogs"` (see `STYLES`); `highlight_code`
+  paints the backticked spans of each message.
 - `set_level(level)`: change the shown level (installs the handler if needed).
 - `supports_color(stream=None)`: the color decision used by `install()`.
-- `ColoredFormatter(colors=True, hostname=None, style="default")` and `StderrHandler` for custom
-  setups.
+- `ColoredFormatter(colors=True, hostname=None, style="default", highlight_code=False)` and
+  `StderrHandler` for custom setups.
 
 ## Migrating from coloredlogs
 
